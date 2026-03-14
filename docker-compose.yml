@@ -252,23 +252,6 @@ services:
       - "8081"
       - "8099"
       - "8092"
-    depends_on:
-      - docspace-backup-background-tasks
-      - docspace-backup
-      - docspace-clear-events
-      - docspace-files
-      - docspace-files-services
-      - docspace-people-server
-      - docspace-socket
-      - docspace-studio-notify
-      - docspace-api
-      - docspace-api-system
-      - docspace-studio
-      - docspace-ssoauth
-      - docspace-doceditor
-      - docspace-management
-      - docspace-sdk
-      - docspace-login
     environment:
       SERVICE_BACKUP: docspace-backup:5050
       SERVICE_FILES: docspace-files:5050
