@@ -1,0 +1,4 @@
+# Do NOT commit .env with secrets to public repos
+# For this private repo, .env is included intentionally
+*.log
+*.tmp

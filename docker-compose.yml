@@ -1,0 +1,472 @@
+# =============================================================================
+# ONLYOFFICE DocSpace - Consolidated Docker Compose
+# For Coolify deployment behind Traefik reverse proxy
+# Domain: docspace.fahlenbock-cloud.net
+# =============================================================================
+
+x-healthcheck: &x-healthcheck
+  interval: 60s
+  retries: 5
+  start_period: 30s
+  timeout: 10s
+
+x-app-env: &x-app-env
+  MYSQL_CONTAINER_NAME: ${MYSQL_CONTAINER_NAME}
+  MYSQL_HOST: ${MYSQL_HOST}
+  MYSQL_PORT: ${MYSQL_PORT}
+  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+  MYSQL_DATABASE: ${MYSQL_DATABASE}
+  MYSQL_USER: ${MYSQL_USER}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+  DATABASE_MIGRATION: ${DATABASE_MIGRATION}
+  APP_DOTNET_ENV: ${APP_DOTNET_ENV}
+  APP_KNOWN_NETWORKS: ${APP_KNOWN_NETWORKS}
+  APP_KNOWN_PROXIES: ${APP_KNOWN_PROXIES}
+  APP_CORE_SERVER_ROOT: ${APP_CORE_SERVER_ROOT}
+  APP_CORE_BASE_DOMAIN: ${APP_CORE_BASE_DOMAIN}
+  APP_CORE_MACHINEKEY: ${APP_CORE_MACHINEKEY}
+  APP_URL_PORTAL: ${APP_URL_PORTAL}
+  INSTALLATION_TYPE: ${INSTALLATION_TYPE}
+  OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL}
+  DOCUMENT_SERVER_JWT_SECRET: ${DOCUMENT_SERVER_JWT_SECRET}
+  DOCUMENT_SERVER_JWT_HEADER: ${DOCUMENT_SERVER_JWT_HEADER}
+  DOCUMENT_SERVER_URL_PUBLIC: ${DOCUMENT_SERVER_URL_PUBLIC}
+  DOCUMENT_CONTAINER_NAME: ${DOCUMENT_CONTAINER_NAME}
+  DOCUMENT_SERVER_URL_EXTERNAL: ${DOCUMENT_SERVER_URL_EXTERNAL}
+  ELK_CONTAINER_NAME: ${ELK_CONTAINER_NAME}
+  ELK_SCHEME: ${ELK_SCHEME}
+  ELK_HOST: ${ELK_HOST}
+  ELK_PORT: ${ELK_PORT}
+  REDIS_CONTAINER_NAME: ${REDIS_CONTAINER_NAME}
+  REDIS_HOST: ${REDIS_HOST}
+  REDIS_PORT: ${REDIS_PORT}
+  REDIS_USER_NAME: ${REDIS_USER_NAME}
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  REDIS_DB: ${REDIS_DB}
+  RABBIT_CONTAINER_NAME: ${RABBIT_CONTAINER_NAME}
+  RABBIT_PROTOCOL: ${RABBIT_PROTOCOL}
+  RABBIT_HOST: ${RABBIT_HOST}
+  RABBIT_PORT: ${RABBIT_PORT}
+  RABBIT_VIRTUAL_HOST: ${RABBIT_VIRTUAL_HOST}
+  RABBIT_USER_NAME: ${RABBIT_USER_NAME}
+  RABBIT_PASSWORD: ${RABBIT_PASSWORD}
+  ROUTER_HOST: ${ROUTER_HOST}
+  LOG_LEVEL: ${LOG_LEVEL}
+  DEBUG_INFO: ${DEBUG_INFO}
+  CERTIFICATE_PATH: ${CERTIFICATE_PATH}
+  NODE_OPTIONS: ${NODE_OPTIONS}
+
+x-service: &x-service-base
+  user: "${UID}:${GID}"
+  restart: always
+  expose:
+    - ${SERVICE_PORT}
+  extra_hosts:
+    - "${EXTRA_HOSTS:-placeholder.local:127.0.0.1}"
+  environment:
+    <<: *x-app-env
+  volumes:
+    - app_data:/app/onlyoffice/data
+    - log_data:/var/log/onlyoffice
+  networks:
+    - docspace
+
+services:
+  # =========================================================================
+  # Infrastructure Services
+  # =========================================================================
+
+  docspace-mysql-server:
+    image: mysql:${MYSQL_VERSION}
+    cap_add:
+      - SYS_NICE
+    container_name: ${MYSQL_CONTAINER_NAME}
+    restart: always
+    tty: true
+    user: mysql
+    expose:
+      - "3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    healthcheck:
+      test: ["CMD", "mysql", "-u", "${MYSQL_USER}", "--password=${MYSQL_PASSWORD}", "-e", ";"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./config/mysql/conf.d/:/etc/mysql/conf.d
+    networks:
+      - docspace
+
+  docspace-redis:
+    image: redis:${REDIS_VERSION}
+    container_name: ${REDIS_CONTAINER_NAME}
+    restart: always
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 3
+      start_period: 10s
+      timeout: 10s
+    networks:
+      - docspace
+
+  docspace-rabbitmq:
+    image: rabbitmq:${RABBITMQ_VERSION}
+    container_name: ${RABBIT_CONTAINER_NAME}
+    restart: always
+    expose:
+      - "5672"
+      - "80"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "status"]
+      interval: 10s
+      retries: 3
+      start_period: 30s
+      timeout: 10s
+    networks:
+      - docspace
+
+  # =========================================================================
+  # ONLYOFFICE Document Server (Community Edition)
+  # =========================================================================
+
+  docspace-document-server:
+    image: onlyoffice/documentserver:${DOCUMENT_SERVER_VERSION}
+    container_name: ${DOCUMENT_CONTAINER_NAME}
+    environment:
+      - JWT_ENABLED=true
+      - JWT_SECRET=${DOCUMENT_SERVER_JWT_SECRET}
+      - JWT_HEADER=${DOCUMENT_SERVER_JWT_HEADER}
+      - JWT_IN_BODY=true
+      - AMQP_URI=${RABBIT_PROTOCOL}://${RABBIT_USER_NAME}:${RABBIT_PASSWORD}@${RABBIT_HOST:-${RABBIT_CONTAINER_NAME}}:${RABBIT_PORT}${RABBIT_VIRTUAL_HOST}
+      - REDIS_SERVER_HOST=${REDIS_HOST:-${REDIS_CONTAINER_NAME}}
+      - REDIS_SERVER_PORT=${REDIS_PORT:-6379}
+      - REDIS_SERVER_USER=${REDIS_USER_NAME}
+      - REDIS_SERVER_PASS=${REDIS_PASSWORD}
+      - REDIS_SERVER_DB=${REDIS_DB}
+    volumes:
+      - app_data:/var/www/onlyoffice/Data
+      - log_data:/var/log/onlyoffice
+      - ds_fonts:/usr/share/fonts
+    expose:
+      - "80"
+    extra_hosts:
+      - "${EXTRA_HOSTS:-placeholder.local:127.0.0.1}"
+    stdin_open: true
+    restart: always
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/info/info.json"]
+      interval: 30s
+      retries: 5
+      start_period: 120s
+      timeout: 10s
+    networks:
+      - docspace
+
+  # =========================================================================
+  # DocSpace Backend Services
+  # =========================================================================
+
+  docspace-backup-background-tasks:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-backup-background:${DOCKER_TAG}"
+    container_name: ${BACKUP_BACKGRUOND_TASKS_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_BACKUP_BACKGRUOND_TASKS}/health/ || exit 1
+
+  docspace-backup:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-backup:${DOCKER_TAG}"
+    container_name: ${BACKUP_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_BACKUP}/health/ || exit 1
+
+  docspace-clear-events:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-clear-events:${DOCKER_TAG}"
+    container_name: ${CLEAR_EVENTS_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_CLEAR_EVENTS}/health/ || exit 1
+
+  docspace-files:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-files:${DOCKER_TAG}"
+    container_name: ${FILES_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_FILES}/health/ || exit 1
+
+  docspace-files-services:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-files-services:${DOCKER_TAG}"
+    container_name: ${FILES_SERVICES_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_FILES_SERVICES}/health/ || exit 1
+
+  docspace-people-server:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-people-server:${DOCKER_TAG}"
+    container_name: ${PEOPLE_SERVER_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_PEOPLE_SERVER}/health/ || exit 1
+
+  docspace-socket:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-socket:${DOCKER_TAG}"
+    container_name: ${SOCKET_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_SOCKET}/health/ || exit 1
+
+  docspace-studio-notify:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-studio-notify:${DOCKER_TAG}"
+    container_name: ${STUDIO_NOTIFY_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_STUDIO_NOTIFY}/health/ || exit 1
+
+  docspace-api:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-api:${DOCKER_TAG}"
+    container_name: ${API_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_API}/health/ || exit 1
+
+  docspace-api-system:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-api-system:${DOCKER_TAG}"
+    container_name: ${API_SYSTEM_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_API_SYSTEM}/health/ || exit 1
+
+  docspace-studio:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-studio:${DOCKER_TAG}"
+    container_name: ${STUDIO_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_STUDIO}/health/ || exit 1
+
+  docspace-ssoauth:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-ssoauth:${DOCKER_TAG}"
+    container_name: ${SSOAUTH_HOST}
+    expose:
+      - ${SERVICE_PORT}
+      - "9834"
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_SSOAUTH}/health/ || exit 1
+
+  docspace-notify:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-notify:${DOCKER_TAG}"
+    container_name: ${NOTIFY_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_NOTIFY}/health/ || exit 1
+
+  # =========================================================================
+  # DocSpace Frontend Services
+  # =========================================================================
+
+  docspace-doceditor:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-doceditor:${DOCKER_TAG}"
+    container_name: ${DOCEDITOR_HOST}
+    expose:
+      - "5013"
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_DOCEDITOR}/doceditor/health || exit 1
+
+  docspace-login:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-login:${DOCKER_TAG}"
+    container_name: ${LOGIN_HOST}
+    expose:
+      - "5011"
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_LOGIN}/login/health || exit 1
+
+  docspace-sdk:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-sdk:${DOCKER_TAG}"
+    container_name: ${SDK_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_SDK}/sdk/health || exit 1
+
+  docspace-management:
+    <<: *x-service-base
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-management:${DOCKER_TAG}"
+    container_name: ${MANAGEMENT_HOST}
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_MANAGEMENT}/management/health || exit 1
+
+  # =========================================================================
+  # DocSpace Health Checks
+  # =========================================================================
+
+  docspace-healthchecks:
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-healthchecks:${DOCKER_TAG}"
+    container_name: ${HEALTHCHECKS_HOST}
+    user: "${UID}:${GID}"
+    restart: always
+    expose:
+      - ${SERVICE_PORT}
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL}
+    volumes:
+      - app_data:/app/onlyoffice/data
+    healthcheck:
+      <<: *x-healthcheck
+      test: curl --fail http://${SERVICE_HEALTHCHECKS}/liveness/ || exit 1
+    networks:
+      - docspace
+
+  # =========================================================================
+  # DocSpace Router (internal nginx)
+  # =========================================================================
+
+  docspace-router:
+    image: "${REGISTRY}${REPO}/${DOCKER_IMAGE_PREFIX}-router:${DOCKER_TAG}"
+    container_name: ${ROUTER_HOST}
+    user: "${UID}:${GID}"
+    restart: always
+    healthcheck:
+      <<: *x-healthcheck
+      test: nginx -t || exit 1
+    expose:
+      - "8081"
+      - "8099"
+      - "8092"
+    depends_on:
+      - docspace-backup-background-tasks
+      - docspace-backup
+      - docspace-clear-events
+      - docspace-files
+      - docspace-files-services
+      - docspace-people-server
+      - docspace-socket
+      - docspace-studio-notify
+      - docspace-api
+      - docspace-api-system
+      - docspace-studio
+      - docspace-ssoauth
+      - docspace-doceditor
+      - docspace-management
+      - docspace-sdk
+      - docspace-login
+    environment:
+      - SERVICE_BACKUP=${SERVICE_BACKUP}
+      - SERVICE_FILES=${SERVICE_FILES}
+      - SERVICE_FILES_SERVICES=${SERVICE_FILES_SERVICES}
+      - SERVICE_CLEAR_EVENTS=${SERVICE_CLEAR_EVENTS}
+      - SERVICE_NOTIFY=${SERVICE_NOTIFY}
+      - SERVICE_PEOPLE_SERVER=${SERVICE_PEOPLE_SERVER}
+      - SERVICE_SOCKET=${SERVICE_SOCKET}
+      - SERVICE_IDENTITY_API=${SERVICE_IDENTITY_API}
+      - SERVICE_IDENTITY=${SERVICE_IDENTITY}
+      - SERVICE_STUDIO_NOTIFY=${SERVICE_STUDIO_NOTIFY}
+      - SERVICE_API=${SERVICE_API}
+      - SERVICE_API_SYSTEM=${SERVICE_API_SYSTEM}
+      - SERVICE_STUDIO=${SERVICE_STUDIO}
+      - SERVICE_AI=${SERVICE_AI}
+      - SERVICE_AI_SERVICE=${SERVICE_AI_SERVICE}
+      - SERVICE_SSOAUTH=${SERVICE_SSOAUTH}
+      - SERVICE_DOCEDITOR=${SERVICE_DOCEDITOR}
+      - SERVICE_MANAGEMENT=${SERVICE_MANAGEMENT}
+      - SERVICE_SDK=${SERVICE_SDK}
+      - SERVICE_LOGIN=${SERVICE_LOGIN}
+      - SERVICE_HEALTHCHECKS=${SERVICE_HEALTHCHECKS}
+      - SERVICE_TELEGRAM=${SERVICE_TELEGRAM}
+      - WRONG_PORTAL_NAME_URL=${WRONG_PORTAL_NAME_URL}
+      - DOCUMENT_CONTAINER_NAME=${DOCUMENT_CONTAINER_NAME}
+      - DOCUMENT_SERVER_URL_EXTERNAL=${DOCUMENT_SERVER_URL_EXTERNAL}
+      - REDIS_CONTAINER_NAME=${REDIS_CONTAINER_NAME}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_USER_NAME=${REDIS_USER_NAME}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB=${REDIS_DB}
+      - SERVICE_PORT=${SERVICE_PORT}
+      - DASHBOARDS_CONTAINER_NAME=
+      - DASHBOARDS_USERNAME=
+      - DASHBOARDS_PASSWORD=
+    volumes:
+      - log_data:/var/log/onlyoffice
+    networks:
+      - docspace
+
+  # =========================================================================
+  # Nginx Proxy (Traefik entry point)
+  # =========================================================================
+
+  docspace-proxy:
+    image: nginx:${PROXY_VERSION}
+    container_name: ${PROXY_HOST}
+    restart: always
+    healthcheck:
+      <<: *x-healthcheck
+      test: nginx -t || exit 1
+    extra_hosts:
+      - "${EXTRA_HOSTS:-placeholder.local:127.0.0.1}"
+    expose:
+      - "80"
+    environment:
+      - ROUTER_HOST=${ROUTER_HOST}
+    volumes:
+      - proxy_log_data:/var/log/nginx
+      - ./config/nginx/templates/nginx.conf.template:/etc/nginx/nginx.conf
+      - ./config/nginx/letsencrypt.conf:/etc/nginx/includes/letsencrypt.conf
+      - ./config/nginx/templates/proxy.upstream.conf.template:/etc/nginx/templates/proxy.upstream.conf.template:ro
+      - ./config/nginx/onlyoffice-proxy.conf:/etc/nginx/conf.d/default.conf
+    labels:
+      - coolify.managed=true
+      - traefik.enable=true
+      - traefik.http.routers.docspace.rule=Host(`docspace.fahlenbock-cloud.net`)
+      - traefik.http.routers.docspace.entryPoints=https
+      - traefik.http.routers.docspace.tls=true
+      - traefik.http.routers.docspace.tls.certresolver=letsencrypt
+      - traefik.http.services.docspace.loadbalancer.server.port=80
+      - traefik.http.routers.docspace-http.rule=Host(`docspace.fahlenbock-cloud.net`)
+      - traefik.http.routers.docspace-http.entryPoints=http
+      - traefik.http.routers.docspace-http.middlewares=redirect-to-https
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+    networks:
+      - docspace
+      - coolify
+
+networks:
+  docspace:
+    name: docspace
+    driver: bridge
+  coolify:
+    external: true
+
+volumes:
+  mysql_data:
+  app_data:
+  log_data:
+  ds_fonts:
+  proxy_log_data:
