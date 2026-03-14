@@ -10,7 +10,7 @@ x-app-env: &x-app-env
   MYSQL_DATABASE: docspace
   MYSQL_USER: onlyoffice_user
   MYSQL_PASSWORD: rYQtWAhJavWk3Ju2IGudpq1J
-  DATABASE_MIGRATION: "false"
+  DATABASE_MIGRATION: "true"
   APP_DOTNET_ENV: ""
   APP_KNOWN_NETWORKS: "0.0.0.0/0"
   APP_KNOWN_PROXIES: "0.0.0.0/0"
@@ -243,15 +243,39 @@ services:
     volumes:
       - app_data:/app/onlyoffice/data
 
+  docspace-migration-runner:
+    image: onlyoffice/docspace-migration-runner:latest
+    container_name: docspace-migration-runner
+    restart: "on-failure"
+    environment:
+      MYSQL_CONTAINER_NAME: docspace-mysql-server
+      MYSQL_HOST: docspace-mysql-server
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: docspace
+      MYSQL_USER: onlyoffice_user
+      MYSQL_PASSWORD: rYQtWAhJavWk3Ju2IGudpq1J
+
   docspace-router:
     image: onlyoffice/docspace-router:latest
     container_name: docspace-router
     user: "root:root"
     restart: always
+    ports:
+      - "8092:8092"
     expose:
       - "8081"
       - "8099"
       - "8092"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.docspace-router.rule=Host(`docspace.fahlenbock-cloud.net`)
+      - traefik.http.routers.docspace-router.entrypoints=https
+      - traefik.http.routers.docspace-router.tls=true
+      - traefik.http.routers.docspace-router.tls.certresolver=letsencrypt
+      - traefik.http.services.docspace-router.loadbalancer.server.port=8092
+    networks:
+      - default
+      - coolify
     environment:
       SERVICE_BACKUP: docspace-backup:5050
       SERVICE_FILES: docspace-files:5050
@@ -285,11 +309,16 @@ services:
       REDIS_PASSWORD: ""
       REDIS_DB: "0"
       SERVICE_PORT: "5050"
-      DASHBOARDS_CONTAINER_NAME: ""
+      DASHBOARDS_CONTAINER_NAME: "none"
       DASHBOARDS_USERNAME: ""
       DASHBOARDS_PASSWORD: ""
     volumes:
       - log_data:/var/log/onlyoffice
+
+networks:
+  default:
+  coolify:
+    external: true
 
 volumes:
   mysql_data:
